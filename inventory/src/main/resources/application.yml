@@ -1,11 +1,16 @@
 spring:
     datasource:
-        url: jdbc:postgresql://localhost:5432/switchscale_db
+        url: jdbc:postgresql://localhost:15432/switchscale_db
         username: postgres
         password: abc123
+        driver-class-name: org.postgresql.Driver
     jpa:
         hibernate:
             ddl-auto: update
+        show-sql: true
+        properties:
+            hibernate:
+                dialect: org.hibernate.dialect.PostgreSQLDialect
     data:
         redis:
             host: localhost
