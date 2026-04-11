@@ -28,25 +28,24 @@ public class InventoryService {
             // leaseTime:how long to hold the lock before auto-release
             if(lock.tryLock(10,30,TimeUnit.SECONDS)){
                 log.info("lock acquired for product id: {}",id);
-
-                Product product = productRepository.findById(id).orElseThrow(() -> new RuntimeException("Product not found"));
-                if(product.getStockQuantity() < qty){
-                    throw new RuntimeException("Insufficient stock");
+                try {
+                    Product product = productRepository.findById(id).orElseThrow(() -> new RuntimeException("Product not found"));
+                    if(product.getStockQuantity() < qty){
+                        throw new RuntimeException("Insufficient stock");
+                    }
+                    product.setStockQuantity(product.getStockQuantity() - qty);
+                    productRepository.save(product);
+                } finally {
+                    lock.unlock();
+                    log.info("lock released for product id: {}",id);
                 }
-                product.setStockQuantity(product.getStockQuantity() - qty);
-                productRepository.save(product);
             }else{
                 throw new RuntimeException("Could not acquire lock, try again later");
             }
         } catch(InterruptedException e){
             Thread.currentThread().interrupt();
             throw new RuntimeException("transaction interrupted",e);
-        } finally {
-            if(lock.isHeldByCurrentThread() && lock.isLocked()){
-                lock.unlock();
-                log.info("lock released for product id: {}",id);
-            }
-        }  
+        }
     }
 
     public Product updateStock(Long id,int qty){

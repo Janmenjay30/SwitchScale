@@ -36,6 +36,35 @@ public class CatelogService {
     // Product Methods
 
     public ProductModel createProduct(ProductModel product){
+        validateProductPayload(product);
+        return productRepository.save(product);
+    }
+
+    public ProductModel updateProduct(String productId, ProductModel payload) {
+        ProductModel existing = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException("Product not found for id: " + productId));
+
+        validateProductPayload(payload);
+
+        existing.setCategoryId(payload.getCategoryId());
+        existing.setName(payload.getName());
+        existing.setDescription(payload.getDescription());
+        existing.setPrice(payload.getPrice());
+        existing.setMrp(payload.getMrp());
+        existing.setWeight(payload.getWeight());
+        existing.setImageUrl(payload.getImageUrl());
+
+        return productRepository.save(existing);
+    }
+
+    public void deleteProduct(String productId) {
+        if (!productRepository.existsById(productId)) {
+            throw new ResourceNotFoundException("Product not found for id: " + productId);
+        }
+        productRepository.deleteById(productId);
+    }
+
+    private void validateProductPayload(ProductModel product) {
         if (!categoryRepository.existsById(product.getCategoryId())) {
             throw new ResourceNotFoundException("Category not found for id: " + product.getCategoryId());
         }
@@ -43,8 +72,6 @@ public class CatelogService {
         if (product.getMrp() < product.getPrice()) {
             throw new IllegalArgumentException("MRP cannot be less than price");
         }
-
-        return productRepository.save(product);
     }
 
     public List<ProductModel> getProductsByCategory(String categoryId){

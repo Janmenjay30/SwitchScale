@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion as Motion } from 'framer-motion'
 import {
   Clock3,
@@ -12,7 +12,62 @@ import {
   Truck,
   X,
 } from 'lucide-react'
-import { categories, products } from './data/catalog'
+import { getMainCategories, getProductsByCategory } from './api/catalogApi'
+
+const PRODUCT_THEMES = [
+  { gradientFrom: '#FFE6C6', gradientTo: '#FFC57D', badge: 'Fresh Pick' },
+  { gradientFrom: '#F8F1D1', gradientTo: '#E8DA9E', badge: 'Daily Need' },
+  { gradientFrom: '#FFD5CC', gradientTo: '#FFB49F', badge: 'Best Seller' },
+  { gradientFrom: '#DCC8B8', gradientTo: '#C8A88F', badge: 'Popular' },
+  { gradientFrom: '#D0F1EC', gradientTo: '#9EDFD5', badge: 'Trending' },
+  { gradientFrom: '#DBF4C1', gradientTo: '#B9E28D', badge: 'Top Pick' },
+]
+
+const ETA_OPTIONS = ['8 min', '9 min', '10 min', '11 min', '12 min']
+
+function hashText(value) {
+  const text = String(value || '')
+  let hash = 0
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) >>> 0
+  }
+  return hash
+}
+
+function mapCategoryToUi(category) {
+  return {
+    id: category.id,
+    label: category.name,
+  }
+}
+
+function mapProductToUi(product) {
+  const hash = hashText(product.id)
+  const theme = PRODUCT_THEMES[hash % PRODUCT_THEMES.length]
+  const eta = ETA_OPTIONS[hash % ETA_OPTIONS.length]
+  const rating = (4 + (hash % 10) / 10).toFixed(1)
+
+  return {
+    id: product.id,
+    category: product.categoryId,
+    name: product.name,
+    size: product.weight || '1 unit',
+    price: product.price,
+    mrp: product.mrp,
+    eta,
+    rating,
+    imageUrl: product.imageUrl,
+    ...theme,
+  }
+}
+
+function uniqueProductsById(products) {
+  const seen = new Map()
+  products.forEach((product) => {
+    seen.set(product.id, product)
+  })
+  return Array.from(seen.values())
+}
 
 const containerMotion = {
   hidden: { opacity: 0, y: 16 },
@@ -32,21 +87,115 @@ const itemMotion = {
   show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.4 } },
 }
 
+function ProductImage({ src, alt, className }) {
+  const [failed, setFailed] = useState(false)
+
+  if (!src || failed) {
+    return null
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 function App() {
   const [query, setQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState('all')
   const [cart, setCart] = useState({})
   const [isCartOpen, setIsCartOpen] = useState(false)
+  const [categories, setCategories] = useState([{ id: 'all', label: 'Everything' }])
+  const [products, setProducts] = useState([])
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true)
+  const [catalogError, setCatalogError] = useState('')
+
+  useEffect(() => {
+    let isCancelled = false
+
+    const loadCategories = async () => {
+      try {
+        const backendCategories = await getMainCategories()
+        if (isCancelled) {
+          return
+        }
+
+        const mapped = Array.isArray(backendCategories)
+          ? backendCategories.map(mapCategoryToUi)
+          : []
+
+        setCategories([{ id: 'all', label: 'Everything' }, ...mapped])
+      } catch (_error) {
+        if (!isCancelled) {
+          setCategories([{ id: 'all', label: 'Everything' }])
+          setCatalogError('Could not load categories from backend.')
+        }
+      }
+    }
+
+    loadCategories()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let isCancelled = false
+
+    const loadProducts = async () => {
+      setIsLoadingCatalog(true)
+      setCatalogError('')
+
+      try {
+        const backendCategoryIds = categories
+          .filter((category) => category.id !== 'all')
+          .map((category) => category.id)
+
+        const productsFromBackend =
+          activeCategory === 'all'
+            ? await Promise.all(backendCategoryIds.map((categoryId) => getProductsByCategory(categoryId)))
+            : [await getProductsByCategory(activeCategory)]
+
+        if (isCancelled) {
+          return
+        }
+
+        const flattened = productsFromBackend.flat().map(mapProductToUi)
+        setProducts(uniqueProductsById(flattened))
+      } catch (_error) {
+        if (!isCancelled) {
+          setProducts([])
+          setCatalogError('Could not load products from backend.')
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingCatalog(false)
+        }
+      }
+    }
+
+    loadProducts()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [activeCategory, categories])
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
-      const categoryMatch = activeCategory === 'all' || product.category === activeCategory
       const queryMatch =
         product.name.toLowerCase().includes(query.toLowerCase()) ||
         product.size.toLowerCase().includes(query.toLowerCase())
-      return categoryMatch && queryMatch
+      return queryMatch
     })
-  }, [activeCategory, query])
+  }, [products, query])
 
   const cartItems = useMemo(() => {
     return Object.entries(cart)
@@ -184,6 +333,18 @@ function App() {
             </div>
 
             <Motion.div layout className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {isLoadingCatalog && (
+                <p className="col-span-full rounded-2xl border border-black/10 bg-white p-4 text-sm text-black/60">
+                  Loading products...
+                </p>
+              )}
+
+              {!isLoadingCatalog && catalogError && (
+                <p className="col-span-full rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {catalogError}
+                </p>
+              )}
+
               <AnimatePresence>
                 {filteredProducts.map((product) => {
                   const qty = cart[product.id] || 0
@@ -199,11 +360,17 @@ function App() {
                       className="rounded-3xl border border-black/10 bg-white p-4 shadow-card"
                     >
                       <div
-                        className="mb-3 flex h-28 items-end justify-between rounded-2xl p-3"
+                        className="relative mb-3 flex h-28 items-end justify-between overflow-hidden rounded-2xl p-3"
                         style={{
                           background: `linear-gradient(140deg, ${product.gradientFrom}, ${product.gradientTo})`,
                         }}
                       >
+                        <ProductImage
+                          src={product.imageUrl}
+                          alt={product.name}
+                          className="absolute inset-0 h-full w-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
                         <span className="rounded-full bg-white/70 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-black/65">
                           {product.badge}
                         </span>
@@ -351,9 +518,23 @@ function App() {
                   cartItems.map((item) => (
                     <div key={item.id} className="rounded-2xl border border-black/10 p-3">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold leading-tight">{item.name}</p>
-                          <p className="mt-1 text-xs text-black/55">{item.size}</p>
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="h-12 w-12 overflow-hidden rounded-xl"
+                            style={{
+                              background: `linear-gradient(140deg, ${item.gradientFrom}, ${item.gradientTo})`,
+                            }}
+                          >
+                            <ProductImage
+                              src={item.imageUrl}
+                              alt={item.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                          <div>
+                            <p className="font-semibold leading-tight">{item.name}</p>
+                            <p className="mt-1 text-xs text-black/55">{item.size}</p>
+                          </div>
                         </div>
                         <p className="text-sm font-bold">Rs {item.lineTotal}</p>
                       </div>
