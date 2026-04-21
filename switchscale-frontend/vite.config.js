@@ -9,6 +9,7 @@ export default defineConfig({
       '/products': { target: 'http://localhost:8002', changeOrigin: true },
       '/categories': { target: 'http://localhost:8002', changeOrigin: true },
       '/cart': { target: 'http://localhost:8004', changeOrigin: true },
+      '/orders': { target: 'http://localhost:8005', changeOrigin: true },
     },
   },
 })

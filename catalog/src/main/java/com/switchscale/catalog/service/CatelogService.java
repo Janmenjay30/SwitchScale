@@ -1,6 +1,10 @@
 package com.switchscale.catalog.service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 
 import org.springframework.stereotype.Service;
 
@@ -47,6 +51,7 @@ public class CatelogService {
         validateProductPayload(payload);
 
         existing.setCategoryId(payload.getCategoryId());
+        existing.setCategoryIds(payload.getCategoryIds());
         existing.setName(payload.getName());
         existing.setDescription(payload.getDescription());
         existing.setPrice(payload.getPrice());
@@ -65,17 +70,47 @@ public class CatelogService {
     }
 
     private void validateProductPayload(ProductModel product) {
-        if (!categoryRepository.existsById(product.getCategoryId())) {
-            throw new ResourceNotFoundException("Category not found for id: " + product.getCategoryId());
+        List<String> resolvedCategoryIds = resolveCategoryIds(product);
+
+        if (resolvedCategoryIds.isEmpty()) {
+            throw new IllegalArgumentException("At least one category is required");
+        }
+
+        if (resolvedCategoryIds.size() > 3) {
+            throw new IllegalArgumentException("A product can belong to at most 3 categories");
+        }
+
+        for (String categoryId : resolvedCategoryIds) {
+            if (!categoryRepository.existsById(categoryId)) {
+                throw new ResourceNotFoundException("Category not found for id: " + categoryId);
+            }
+        }
+
+        if (product.getPrice() == null || product.getMrp() == null) {
+            throw new IllegalArgumentException("Price and MRP are required");
         }
 
         if (product.getMrp() < product.getPrice()) {
             throw new IllegalArgumentException("MRP cannot be less than price");
         }
+
+        product.setCategoryIds(resolvedCategoryIds);
+        product.setCategoryId(resolvedCategoryIds.get(0));
     }
 
     public List<ProductModel> getProductsByCategory(String categoryId){
-        return productRepository.findByCategoryId(categoryId);
+        LinkedHashMap<String, ProductModel> merged = new LinkedHashMap<>();
+
+        for (ProductModel product : productRepository.findByCategoryIdsContaining(categoryId)) {
+            merged.put(product.getId(), product);
+        }
+
+        // Backward compatibility for legacy rows saved with only categoryId.
+        for (ProductModel product : productRepository.findByCategoryId(categoryId)) {
+            merged.putIfAbsent(product.getId(), product);
+        }
+
+        return new ArrayList<>(merged.values());
     }
 
     public ProductModel getProductById(String productId){
@@ -85,6 +120,24 @@ public class CatelogService {
 
     public List<ProductModel> searchProductsByName(String name){
         return productRepository.findByNameContainingIgnoreCase(name);
+    }
+
+    private List<String> resolveCategoryIds(ProductModel product) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+
+        if (product.getCategoryIds() != null) {
+            product.getCategoryIds().stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(value -> !value.isBlank())
+                    .forEach(merged::add);
+        }
+
+        if (product.getCategoryId() != null && !product.getCategoryId().isBlank()) {
+            merged.add(product.getCategoryId().trim());
+        }
+
+        return new ArrayList<>(merged);
     }
 
 

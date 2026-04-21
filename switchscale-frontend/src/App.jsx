@@ -13,6 +13,9 @@ import {
   X,
 } from 'lucide-react'
 import { getMainCategories, getProductsByCategory } from './api/catalogApi'
+import { addToCart, clearCart, getCart, removeFromCart } from './api/cartApi'
+import { checkoutOrder } from './api/orderApi'
+import { ApiError } from './api/http'
 
 const PRODUCT_THEMES = [
   { gradientFrom: '#FFE6C6', gradientTo: '#FFC57D', badge: 'Fresh Pick' },
@@ -24,6 +27,8 @@ const PRODUCT_THEMES = [
 ]
 
 const ETA_OPTIONS = ['8 min', '9 min', '10 min', '11 min', '12 min']
+const CART_USER_ID = 'frontend-user-1'
+const DEFAULT_ADDRESS_ID = 1
 
 function hashText(value) {
   const text = String(value || '')
@@ -115,6 +120,38 @@ function App() {
   const [products, setProducts] = useState([])
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(true)
   const [catalogError, setCatalogError] = useState('')
+  const [cartItemsFromApi, setCartItemsFromApi] = useState([])
+  const [cartTotalFromApi, setCartTotalFromApi] = useState(0)
+  const [isCartSyncing, setIsCartSyncing] = useState(false)
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false)
+  const [cartError, setCartError] = useState('')
+  const [checkoutMessage, setCheckoutMessage] = useState('')
+
+  const applyCartResponse = (response) => {
+    const items = Array.isArray(response?.items) ? response.items : []
+    const quantityMap = {}
+
+    items.forEach((item) => {
+      quantityMap[item.productId] = item.quantity
+    })
+
+    setCart(quantityMap)
+    setCartItemsFromApi(items)
+    setCartTotalFromApi(Number(response?.cartTotal || 0))
+  }
+
+  const syncCart = async () => {
+    try {
+      const response = await getCart(CART_USER_ID)
+      applyCartResponse(response)
+    } catch (_error) {
+      setCartError('Could not sync cart with backend.')
+    }
+  }
+
+  useEffect(() => {
+    syncCart()
+  }, [])
 
   useEffect(() => {
     let isCancelled = false
@@ -198,45 +235,88 @@ function App() {
   }, [products, query])
 
   const cartItems = useMemo(() => {
-    return Object.entries(cart)
-      .map(([productId, quantity]) => {
-        const product = products.find((item) => item.id === productId)
-        if (!product) {
-          return null
-        }
-        return {
-          ...product,
-          quantity,
-          lineTotal: product.price * quantity,
-        }
-      })
-      .filter(Boolean)
-  }, [cart])
+    return cartItemsFromApi.map((item) => {
+      const product = products.find((entry) => entry.id === item.productId)
+      const unitPrice = Number(item.price ?? product?.price ?? 0)
+
+      return {
+        id: item.productId,
+        name: product?.name || item.productName,
+        size: product?.size || '1 unit',
+        price: unitPrice,
+        quantity: item.quantity,
+        lineTotal: unitPrice * item.quantity,
+        imageUrl: product?.imageUrl || item.imageurl,
+        gradientFrom: product?.gradientFrom || '#e7f6da',
+        gradientTo: product?.gradientTo || '#ffe5d7',
+      }
+    })
+  }, [cartItemsFromApi, products])
 
   const totalItems = cartItems.reduce((sum, item) => sum + item.quantity, 0)
-  const subtotal = cartItems.reduce((sum, item) => sum + item.lineTotal, 0)
+  const subtotal = cartTotalFromApi
   const deliveryFee = totalItems > 0 ? 29 : 0
   const grandTotal = subtotal + deliveryFee
 
-  const addItem = (productId) => {
-    setCart((prev) => ({
-      ...prev,
-      [productId]: (prev[productId] || 0) + 1,
-    }))
+  const addItem = async (productId) => {
+    setCartError('')
+    setCheckoutMessage('')
+    setIsCartSyncing(true)
+    try {
+      const response = await addToCart(CART_USER_ID, productId, 1)
+      applyCartResponse(response)
+    } catch (_error) {
+      setCartError('Could not add item to cart.')
+    } finally {
+      setIsCartSyncing(false)
+    }
   }
 
-  const removeItem = (productId) => {
-    setCart((prev) => {
-      const current = prev[productId] || 0
-      if (current <= 1) {
-        const { [productId]: _removed, ...rest } = prev
-        return rest
+  const removeItem = async (productId) => {
+    setCartError('')
+    setCheckoutMessage('')
+    setIsCartSyncing(true)
+    try {
+      const response = await removeFromCart(CART_USER_ID, productId)
+      applyCartResponse(response)
+    } catch (_error) {
+      setCartError('Could not remove item from cart.')
+    } finally {
+      setIsCartSyncing(false)
+    }
+  }
+
+  const clearCartItems = async () => {
+    setCartError('')
+    setCheckoutMessage('')
+    setIsCartSyncing(true)
+    try {
+      await clearCart(CART_USER_ID)
+      await syncCart()
+    } catch (_error) {
+      setCartError('Could not clear cart.')
+    } finally {
+      setIsCartSyncing(false)
+    }
+  }
+
+  const placeOrder = async () => {
+    setCartError('')
+    setCheckoutMessage('')
+    setIsPlacingOrder(true)
+    try {
+      const order = await checkoutOrder(CART_USER_ID, DEFAULT_ADDRESS_ID)
+      setCheckoutMessage(`Order #${order.id} placed successfully.`)
+      await syncCart()
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setCartError(error.message || 'Could not place order.')
+      } else {
+        setCartError('Could not place order. Make sure order service is running.')
       }
-      return {
-        ...prev,
-        [productId]: current - 1,
-      }
-    })
+    } finally {
+      setIsPlacingOrder(false)
+    }
   }
 
   return (
@@ -509,6 +589,18 @@ function App() {
               </div>
 
               <div className="mask-scroll flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                {cartError && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {cartError}
+                  </div>
+                )}
+
+                {checkoutMessage && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                    {checkoutMessage}
+                  </div>
+                )}
+
                 {cartItems.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-black/20 p-6 text-center">
                     <p className="font-semibold">Your cart is empty</p>
@@ -578,13 +670,25 @@ function App() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  className="mt-4 w-full rounded-xl bg-brand-ink px-4 py-3 text-sm font-semibold text-white transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={totalItems === 0}
-                >
-                  Proceed to checkout
-                </button>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    className="w-full rounded-xl border border-black/15 bg-white px-4 py-3 text-sm font-semibold text-black transition enabled:hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={clearCartItems}
+                    disabled={totalItems === 0 || isCartSyncing || isPlacingOrder}
+                  >
+                    {isCartSyncing ? 'Syncing...' : 'Clear cart'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="w-full rounded-xl bg-brand-ink px-4 py-3 text-sm font-semibold text-white transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={placeOrder}
+                    disabled={totalItems === 0 || isCartSyncing || isPlacingOrder}
+                  >
+                    {isPlacingOrder ? 'Placing...' : 'Proceed to checkout'}
+                  </button>
+                </div>
               </div>
             </Motion.aside>
           </>

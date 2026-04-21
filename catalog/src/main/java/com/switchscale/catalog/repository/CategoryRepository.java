@@ -1,6 +1,7 @@
 package com.switchscale.catalog.repository;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.mongodb.repository.MongoRepository;
 
@@ -13,5 +14,7 @@ public interface CategoryRepository extends MongoRepository<CategoryModel, Strin
 
     // fetched sub-categories of a category
     List<CategoryModel> findByParentId(String parentId);
+
+    Optional<CategoryModel> findByNameIgnoreCase(String name);
 
 }

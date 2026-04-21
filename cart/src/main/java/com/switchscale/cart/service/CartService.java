@@ -107,6 +107,15 @@ public class CartService {
         cartRepository.deleteById(userId); //removes key from redis entirely
     }
 
+    public boolean clearCartIfExists(String userId) {
+        validateUserId(userId);
+        if (!cartRepository.existsById(userId)) {
+            return false;
+        }
+        cartRepository.deleteById(userId);
+        return true;
+    }
+
     private CartModel getExistingCartOrThrow(String userId) {
         return cartRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cart not found for userId: " + userId));
