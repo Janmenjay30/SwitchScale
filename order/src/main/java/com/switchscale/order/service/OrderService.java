@@ -12,7 +12,13 @@ import org.springframework.stereotype.Service;
 
 import com.switchscale.order.Event.OrderPlacedEvent;
 import com.switchscale.order.config.CartClient;
+import com.switchscale.order.config.DeliveryClient;
+import com.switchscale.order.config.NotificationClient;
+import com.switchscale.order.config.PaymentClient;
 import com.switchscale.order.dto.CartDTO;
+import com.switchscale.order.dto.DeliveryCreateRequest;
+import com.switchscale.order.dto.NotificationCreateRequest;
+import com.switchscale.order.dto.PaymentCreateRequest;
 import com.switchscale.order.model.OrderItem;
 import com.switchscale.order.model.OrderModel;
 import com.switchscale.order.repository.OrderRepository;
@@ -29,6 +35,9 @@ public class OrderService {
     private final CartClient cartClient;
     private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
     private final OrderRepository orderRepository;
+    private final PaymentClient paymentClient;
+    private final DeliveryClient deliveryClient;
+    private final NotificationClient notificationClient;
 
     @Value("${order.events.kafka.enabled:false}")
     private boolean kafkaEventsEnabled;
@@ -76,6 +85,10 @@ public class OrderService {
             }
         }
 
+        createPayment(savedOrder);
+        createDelivery(savedOrder);
+        sendOrderNotification(savedOrder);
+
         try {
             cartClient.clearCart(userId);
         } catch (Exception ex) {
@@ -85,6 +98,47 @@ public class OrderService {
 
         return savedOrder;
         
+    }
+
+    private void createPayment(OrderModel order) {
+        try {
+            PaymentCreateRequest request = new PaymentCreateRequest(
+                    order.getId(),
+                    order.getUserId(),
+                    order.getTotalAmount(),
+                    "COD");
+            paymentClient.createPayment(request);
+        } catch (Exception ex) {
+            log.warn("Order {} created but payment creation failed: {}", order.getId(), ex.getMessage());
+        }
+    }
+
+    private void createDelivery(OrderModel order) {
+        try {
+            DeliveryCreateRequest request = new DeliveryCreateRequest(
+                    order.getId(),
+                    order.getUserId(),
+                    order.getAddressId(),
+                    20);
+            deliveryClient.createDelivery(request);
+        } catch (Exception ex) {
+            log.warn("Order {} created but delivery creation failed: {}", order.getId(), ex.getMessage());
+        }
+    }
+
+    private void sendOrderNotification(OrderModel order) {
+        try {
+            NotificationCreateRequest request = new NotificationCreateRequest(
+                    order.getId(),
+                    order.getUserId(),
+                    "Order Confirmed",
+                    "Your order #" + order.getId() + " is confirmed and being prepared.",
+                    "IN_APP",
+                    null);
+            notificationClient.sendNotification(request);
+        } catch (Exception ex) {
+            log.warn("Order {} created but notification dispatch failed: {}", order.getId(), ex.getMessage());
+        }
     }
 
 
