@@ -1,0 +1,18 @@
+# Build output
+target/
+
+# VCS and IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+*.iml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Logs and local env files
+*.log
+.env
+.env.*
